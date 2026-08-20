@@ -1,0 +1,13 @@
+---
+- name: Reload eve autoclean agent
+  # bootout first so a changed plist is actually re-read; `|| true` because
+  # bootout fails when the service was not loaded (first install).
+  ansible.builtin.shell: |
+    set -u
+    launchctl bootout gui/{{ ansible_user_uid }}/{{ eve_autoclean_label }} 2>/dev/null || true
+    launchctl enable gui/{{ ansible_user_uid }}/{{ eve_autoclean_label }} 2>/dev/null || true
+    launchctl bootstrap gui/{{ ansible_user_uid }} {{ eve_autoclean_plist | quote }}
+  args:
+    executable: /bin/bash
+  changed_when: true
+  listen: reload eve autoclean agent

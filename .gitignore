@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Python (legacy obliterate scripts, retiring end of Phase 1)
+__pycache__/
+*.pyc
+
+# Rust / Cargo
+target/
+**/target/
+
+# Tauri
+src-tauri/target/
+ui/dist/
+
+# Ansible run artifacts
+ansible/*.log
+ansible/run.stdout.log
+
+# graphify knowledge graph (regenerate with `graphify update .`)
+graphify-out/
+
+# scratch
+OUTPUT
+
+# Built app bundles
+dist/

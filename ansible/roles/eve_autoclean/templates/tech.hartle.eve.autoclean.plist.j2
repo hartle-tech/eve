@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Managed by Ansible (eve_autoclean role). Do not edit by hand. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ eve_autoclean_label }}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ eve_autoclean_bin }}</string>
+        <string>autoclean</string>
+        <string>--threshold-gb</string>
+        <string>{{ eve_autoclean_threshold_gb }}</string>
+        <string>--cooldown-sec</string>
+        <string>{{ eve_autoclean_cooldown_sec }}</string>
+    </array>
+
+    <!-- launchd has no low-disk event, so eve polls and exits after a single
+         statfs in the common case. -->
+    <key>StartInterval</key>
+    <integer>{{ eve_autoclean_interval }}</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- eve writes its own log; these catch anything that escapes it. -->
+    <key>StandardOutPath</key>
+    <string>{{ eve_autoclean_log_dir }}/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ eve_autoclean_log_dir }}/launchd.err.log</string>
+
+    <!-- Never compete with foreground work; this fires when the machine is
+         already struggling. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Without this, launchd's bare PATH makes eve's brew/docker/npm/go
+             lookups fail and those categories silently no-op: no error, no log
+             line, just missing reclaim. -->
+        <key>PATH</key>
+        <string>{{ eve_autoclean_path }}</string>
+    </dict>
+</dict>
+</plist>

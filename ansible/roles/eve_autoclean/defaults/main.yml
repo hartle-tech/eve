@@ -1,0 +1,60 @@
+---
+# eve_autoclean — defaults.
+#
+# Installs the eve binary and a LaunchAgent that watches free space on the data
+# volume, firing `eve autoclean` when it drops below the threshold.
+
+eve_autoclean_label: tech.hartle.eve.autoclean
+
+# playbook_dir is <repo>/ansible, so dirname is the repo root.
+eve_autoclean_repo: "{{ playbook_dir | dirname }}"
+
+eve_autoclean_user: "{{ ansible_env.USER }}"
+
+# Where the user-facing binary lives.
+eve_autoclean_bin_dir: "{{ ansible_env.HOME }}/.local/bin"
+eve_autoclean_bin: "{{ eve_autoclean_bin_dir }}/eve"
+
+# The root-owned copy that sudo actually executes.
+#
+# This is what makes the sudoers grant a real security boundary rather than an
+# organisational one. The previous arrangement pointed sudoers at a script in
+# the operator's home directory, which is user-writable — anything able to
+# write that file gained passwordless root, and the rule's own comment said so.
+# eve refuses to use this helper unless it is root-owned and not group- or
+# world-writable, falling back to the invoking binary instead.
+eve_autoclean_helper_dir: /usr/local/libexec
+eve_autoclean_helper: "{{ eve_autoclean_helper_dir }}/eve"
+
+eve_autoclean_log_dir: "{{ ansible_env.HOME }}/Library/Logs/hartle.tech"
+eve_autoclean_state_dir: "{{ ansible_env.HOME }}/Library/Application Support/hartle.tech/eve"
+eve_autoclean_agent_dir: "{{ ansible_env.HOME }}/Library/LaunchAgents"
+eve_autoclean_plist: "{{ eve_autoclean_agent_dir }}/{{ eve_autoclean_label }}.plist"
+
+# launchd hands jobs a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin). eve gates
+# whole categories behind a PATH lookup — brew, docker, npm, go, xcrun — so
+# under that bare PATH those categories silently do not run: no error, no log
+# line, just missing reclaim. brew/npm/node live in /opt/homebrew/bin and
+# docker in ~/.local/bin.
+eve_autoclean_path: "/opt/homebrew/bin:/opt/homebrew/sbin:{{ ansible_env.HOME }}/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Trigger policy.
+eve_autoclean_interval: 300          # poll every 5 minutes
+eve_autoclean_threshold_gb: 5        # fire below 5 GB free
+eve_autoclean_cooldown_sec: 10800    # at most one real run per 3 hours
+
+# Clear the cooldown stamp on apply. Without this, a previous run leaves the
+# agent suppressed for up to cooldown_sec after install, so a freshly
+# installed agent would not fire when it should.
+eve_autoclean_reset_cooldown: true
+
+# Passwordless root for the privileged categories. Set false to install the
+# agent without touching sudoers; the unattended run then reclaims only what it
+# can as the user and logs the rest as needing root.
+eve_autoclean_manage_sudoers: true
+eve_autoclean_sudoers_path: /etc/sudoers.d/eve-autoclean
+
+# Build from source before installing. Set false when deploying a prebuilt
+# binary (CI artefact, release download).
+eve_autoclean_build: true
+eve_autoclean_cargo: "{{ ansible_env.HOME }}/.cargo/bin/cargo"

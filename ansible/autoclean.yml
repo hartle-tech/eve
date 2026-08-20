@@ -1,0 +1,23 @@
+---
+# autoclean.yml — install the low-disk autoclean LaunchAgent.
+#
+# Kept separate from playbook.yml on purpose: that one is a from-scratch
+# MacBook bootstrap, this is an ongoing service with its own lifecycle.
+#
+# Usage:
+#   ansible-playbook -i hosts.ini autoclean.yml --ask-become-pass
+#
+# Knobs:
+#   -e eve_autoclean_threshold_gb=10        fire earlier
+#   -e eve_autoclean_cooldown_sec=3600      allow hourly runs
+#   -e eve_autoclean_manage_sudoers=false   install without touching sudoers
+#
+# Test without waiting for a real low-disk event:
+#   EVE_AUTOCLEAN_THRESHOLD_GB=999 EVE_AUTOCLEAN_DRYRUN=1 ~/.local/bin/eve-autoclean
+#   tail -f ~/Library/Logs/hartle.tech/eve-autoclean.log
+
+- name: Eve — low-disk autoclean agent
+  hosts: local
+  gather_facts: true
+  roles:
+    - eve_autoclean

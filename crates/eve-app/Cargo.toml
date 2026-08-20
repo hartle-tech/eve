@@ -1,0 +1,25 @@
+[package]
+name = "eve-app"
+description = "The eve desktop application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "eve-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+eve-core.workspace = true
+eve-catalog.workspace = true
+eve-engines.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["macos-private-api"] }
+window-vibrancy = "0.6"

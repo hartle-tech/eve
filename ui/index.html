@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>eve</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">eve</span>
+    </div>
+
+    <nav aria-label="Sections">
+      <button class="nav-item is-active" data-view="clean" aria-current="page">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h6"/></svg>
+        <span>Clean</span>
+      </button>
+      <button class="nav-item" data-view="disk">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.5"/></svg>
+        <span>Disk</span>
+      </button>
+      <button class="nav-item" data-view="health">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8.5h3l1.5-4 3 8L11 8.5h3"/></svg>
+        <span>Health</span>
+      </button>
+      <button class="nav-item" data-view="history">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>
+        <span>History</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="disk-chip">
+        <div class="disk-chip-head">
+          <span id="free-value">—</span>
+          <span class="disk-chip-label">free</span>
+        </div>
+        <div class="disk-meter"><div class="disk-meter-fill" id="meter-fill"></div></div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <!-- ────────────────────────────────────────────────────── clean -->
+    <section class="view is-active" id="view-clean">
+      <div class="scroll">
+        <header class="hero">
+          <p class="hero-eyebrow">Ready to reclaim</p>
+          <output class="hero-figure" id="reclaim-figure">—</output>
+          <p class="hero-sub" id="hero-sub">Scanning your disk…</p>
+
+          <div class="hero-actions">
+            <button class="btn btn-primary" id="clean" disabled>Clean up</button>
+            <button class="btn btn-ghost" id="rescan">Rescan</button>
+          </div>
+
+          <label class="switch">
+            <input type="checkbox" id="privileged" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label">Include system files that need your password</span>
+          </label>
+        </header>
+
+        <section class="panel" aria-labelledby="will-remove-h">
+          <div class="panel-head">
+            <h2 id="will-remove-h">Will be removed</h2>
+            <span class="pill" id="remove-count"></span>
+          </div>
+          <ul class="list" id="remove-rows"></ul>
+        </section>
+
+        <section class="panel panel-held" aria-labelledby="held-h">
+          <button class="panel-head panel-toggle" id="held-toggle" aria-expanded="false">
+            <span class="held-icon" aria-hidden="true">✓</span>
+            <h2 id="held-h">Left alone</h2>
+            <span class="pill pill-held" id="held-count"></span>
+            <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
+          </button>
+          <div class="panel-body" id="held-body" hidden>
+            <p class="panel-note">
+              eve found these but did not touch them — something still has them
+              open, or they are not cache at all.
+            </p>
+            <ul class="list list-held" id="held-rows"></ul>
+          </div>
+        </section>
+      </div>
+
+      <footer class="statusbar">
+        <span class="dot" id="status-dot"></span>
+        <span id="status">Scanning…</span>
+      </footer>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────────── disk -->
+    <section class="view" id="view-disk">
+      <div class="scroll">
+        <header class="page-head">
+          <h1>Disk</h1>
+          <p>What is actually taking up space in your home folder.</p>
+        </header>
+        <section class="panel"><ul class="list" id="disk-bars"></ul></section>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────── health -->
+    <section class="view" id="view-health">
+      <div class="scroll">
+        <header class="page-head">
+          <h1>Health</h1>
+          <p id="health-host">—</p>
+        </header>
+        <section class="panel">
+          <div class="panel-head"><h2>Findings</h2></div>
+          <ul class="list" id="findings"></ul>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Volumes</h2></div>
+          <ul class="list" id="volumes"></ul>
+        </section>
+      </div>
+    </section>
+
+    <!-- ──────────────────────────────────────────────────── history -->
+    <section class="view" id="view-history">
+      <div class="scroll">
+        <header class="page-head">
+          <h1>History</h1>
+          <p id="history-total">—</p>
+        </header>
+        <section class="panel"><ul class="list list-log" id="log"></ul></section>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

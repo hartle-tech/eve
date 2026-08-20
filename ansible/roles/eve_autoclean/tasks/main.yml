@@ -1,0 +1,171 @@
+---
+# eve_autoclean — build and install eve, its LaunchAgent, and the root-owned
+# privileged helper.
+#
+#   ansible-playbook -i hosts.ini autoclean.yml --ask-become-pass
+#
+# --ask-become-pass is only needed for the sudoers and helper tasks. Run with
+#   -e eve_autoclean_manage_sudoers=false
+# to install everything else without become.
+
+- name: macOS only
+  ansible.builtin.assert:
+    that: ansible_system == "Darwin"
+    fail_msg: "eve_autoclean targets macOS (launchd + TCC specific)."
+
+- name: Ensure runtime directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ eve_autoclean_bin_dir }}"
+    - "{{ eve_autoclean_log_dir }}"
+    - "{{ eve_autoclean_state_dir }}"
+    - "{{ eve_autoclean_agent_dir }}"
+
+# ------------------------------------------------------------------- build
+
+- name: Build eve
+  ansible.builtin.command:
+    cmd: "{{ eve_autoclean_cargo }} build --release --locked"
+    chdir: "{{ eve_autoclean_repo }}"
+  register: eve_build
+  changed_when: "'Compiling' in eve_build.stderr"
+  when: eve_autoclean_build | bool
+
+- name: Confirm the built binary exists
+  ansible.builtin.stat:
+    path: "{{ eve_autoclean_repo }}/target/release/eve"
+  register: eve_binary
+
+- name: Fail early if there is nothing to install
+  ansible.builtin.assert:
+    that: eve_binary.stat.exists
+    fail_msg: >-
+      No binary at {{ eve_autoclean_repo }}/target/release/eve.
+      Run with -e eve_autoclean_build=true, or build it by hand first.
+
+# ----------------------------------------------------------------- install
+
+- name: Install the user-facing binary
+  # Deployed out of the repo so the agent keeps working if the repo is moved,
+  # rebuilt mid-run, or checked out to another branch.
+  ansible.builtin.copy:
+    src: "{{ eve_autoclean_repo }}/target/release/eve"
+    dest: "{{ eve_autoclean_bin }}"
+    mode: '0755'
+    remote_src: true
+  notify: Reload eve autoclean agent
+
+- name: Install the root-owned privileged helper
+  # eve verifies this is root-owned and not group/world-writable before it will
+  # run it under sudo. If those permissions drift, eve silently falls back to
+  # re-executing itself rather than trusting a helper that only looks like one.
+  ansible.builtin.copy:
+    src: "{{ eve_autoclean_repo }}/target/release/eve"
+    dest: "{{ eve_autoclean_helper }}"
+    owner: root
+    group: wheel
+    mode: '0755'
+    remote_src: true
+  become: true
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Install the LaunchAgent plist
+  ansible.builtin.template:
+    src: tech.hartle.eve.autoclean.plist.j2
+    dest: "{{ eve_autoclean_plist }}"
+    mode: '0644'
+  notify: Reload eve autoclean agent
+
+- name: Grant passwordless root to the privileged worker
+  # validate runs visudo -cf against a temp copy BEFORE the file is put in
+  # place. Without it, a malformed drop-in breaks sudo for the whole machine
+  # and there is no way back in without a recovery boot.
+  ansible.builtin.template:
+    src: eve-autoclean.sudoers.j2
+    dest: "{{ eve_autoclean_sudoers_path }}"
+    owner: root
+    group: wheel
+    mode: '0440'
+    validate: '/usr/sbin/visudo -cf %s'
+  become: true
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Clear the cooldown stamp so a fresh apply is not suppressed
+  ansible.builtin.file:
+    path: "{{ eve_autoclean_state_dir }}/last-run"
+    state: absent
+  when: eve_autoclean_reset_cooldown | bool
+
+# ------------------------------------------------------- retire the old tool
+
+- name: Remove the superseded shell guard and its sudoers rule
+  # The two-pass user/root wrapper is gone: eve does the split itself via the
+  # catalog's run-context field and the privileged worker, neither of which can
+  # hang under launchd the way the osascript escalation did.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ eve_autoclean_bin_dir }}/eve-autoclean"
+
+- name: Load the agent now if anything changed
+  ansible.builtin.meta: flush_handlers
+
+# ------------------------------------------------------------------ verify
+
+- name: Verify the agent is registered with launchd
+  ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}/{{ eve_autoclean_label }}"
+  register: eve_autoclean_agent_state
+  changed_when: false
+
+- name: Verify passwordless sudo actually resolves
+  # The whole point of the sudoers file. `sudo -n -l` resolves the rule without
+  # executing anything; a non-zero exit here means every unattended privileged
+  # run would fail silently.
+  ansible.builtin.command: "/usr/bin/sudo -n -l {{ eve_autoclean_helper }} __worker"
+  register: eve_autoclean_sudo_check
+  changed_when: false
+  failed_when: eve_autoclean_sudo_check.rc != 0
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Verify the helper is genuinely root-owned
+  # A helper that is not root-owned makes the sudoers grant an escalation hole
+  # rather than a boundary, so assert it rather than assuming the copy worked.
+  ansible.builtin.stat:
+    path: "{{ eve_autoclean_helper }}"
+  register: eve_helper_stat
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Assert helper ownership and permissions
+  ansible.builtin.assert:
+    that:
+      - eve_helper_stat.stat.exists
+      - eve_helper_stat.stat.pw_name == 'root'
+      - not eve_helper_stat.stat.wgrp
+      - not eve_helper_stat.stat.woth
+    fail_msg: >-
+      {{ eve_autoclean_helper }} is not root-owned and non-writable by others.
+      The sudoers grant would be a privilege-escalation hole; refusing.
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Prove the installed binary runs
+  ansible.builtin.command: "{{ eve_autoclean_bin }} --version"
+  register: eve_version
+  changed_when: false
+
+- name: Report installed state
+  ansible.builtin.debug:
+    msg:
+      - "version  : {{ eve_version.stdout }}"
+      - "agent    : {{ eve_autoclean_label }} (every {{ eve_autoclean_interval }}s)"
+      - "trigger  : free < {{ eve_autoclean_threshold_gb }} GB on /System/Volumes/Data"
+      - "cooldown : {{ eve_autoclean_cooldown_sec }}s between real runs"
+      - "binary   : {{ eve_autoclean_bin }}"
+      - "helper   : {{ eve_autoclean_helper if eve_autoclean_manage_sudoers | bool else 'not installed' }}"
+      - "log      : {{ eve_autoclean_log_dir }}/eve-autoclean.log"
+      - "journal  : {{ eve_autoclean_state_dir }}/journal.jsonl"
+      - "sudoers  : {{ eve_autoclean_sudoers_path if eve_autoclean_manage_sudoers | bool else 'not managed' }}"
+      - "launchd  : {{ 'registered' if eve_autoclean_agent_state.rc == 0 else 'NOT REGISTERED' }}"
