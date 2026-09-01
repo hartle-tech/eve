@@ -1,0 +1,250 @@
+---
+# eve_autoclean — build and install eve, its LaunchAgent, and the root-owned
+# privileged helper.
+#
+#   ansible-playbook -i hosts.ini autoclean.yml --ask-become-pass
+#
+# --ask-become-pass is only needed for the sudoers and helper tasks. Run with
+#   -e eve_autoclean_manage_sudoers=false
+# to install everything else without become.
+
+- name: macOS only
+  ansible.builtin.assert:
+    that: ansible_system == "Darwin"
+    fail_msg: "eve_autoclean targets macOS (launchd + TCC specific)."
+
+- name: Ensure runtime directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ eve_autoclean_bin_dir }}"
+    - "{{ eve_autoclean_log_dir }}"
+    - "{{ eve_autoclean_state_dir }}"
+    - "{{ eve_autoclean_agent_dir }}"
+
+# ------------------------------------------------------------------- build
+
+- name: Build eve
+  ansible.builtin.command:
+    cmd: "{{ eve_autoclean_cargo }} build --release --locked"
+    chdir: "{{ eve_autoclean_repo }}"
+  register: eve_build
+  changed_when: "'Compiling' in eve_build.stderr"
+  when: eve_autoclean_build | bool
+
+- name: Confirm the built binary exists
+  ansible.builtin.stat:
+    path: "{{ eve_autoclean_repo }}/target/release/eve"
+  register: eve_binary
+
+- name: Fail early if there is nothing to install
+  ansible.builtin.assert:
+    that: eve_binary.stat.exists
+    fail_msg: >-
+      No binary at {{ eve_autoclean_repo }}/target/release/eve.
+      Run with -e eve_autoclean_build=true, or build it by hand first.
+
+- name: Look for a Developer ID signing identity
+  # Detected rather than assumed, so this role still deploys on a machine that
+  # has no certificate — it just signs ad-hoc there and says the grants will
+  # not survive.
+  ansible.builtin.command: /usr/bin/security find-identity -v -p codesigning
+  register: eve_identities
+  changed_when: false
+  failed_when: false
+
+- name: Use the Developer ID identity when one is present
+  ansible.builtin.set_fact:
+    eve_autoclean_have_developer_id: >-
+      {{ 'Developer ID Application' in (eve_identities.stdout | default('')) }}
+
+- name: Sign the built binary with a stable identity
+  # TCC keys a permission to the program's *code signing requirement*, not to
+  # its path. rustc emits an ad-hoc, linker-signed binary whose identifier is
+  # derived from a build hash (`eve-630903ef6a095ee2`), so every rebuild is a
+  # different program as far as macOS is concerned — and every grant the user
+  # gave is silently discarded, re-prompting for Photos, the media library,
+  # Documents, Desktop and Downloads all over again.
+  #
+  # A fixed identifier keeps the name stable and legible in System Settings.
+  # Signing with a real certificate (eve_autoclean_signing_identity, from
+  # scripts/create-signing-identity.sh) is what actually makes the grants
+  # survive a rebuild: the requirement then pins the leaf certificate instead
+  # of a per-build cdhash.
+  #
+  # --timestamp and --options runtime are what a Developer ID signature needs
+  # to be notarizable, and a secure timestamp is also what keeps an existing
+  # signature valid after the certificate expires. Both are harmless ad-hoc.
+  ansible.builtin.command:
+    cmd: >-
+      /usr/bin/codesign --force
+      --sign {{ eve_autoclean_signing_identity | quote }}
+      --identifier {{ eve_autoclean_bundle_id | quote }}
+      {{ '--timestamp --options runtime' if eve_autoclean_have_developer_id else '' }}
+      {{ eve_autoclean_repo }}/target/release/eve
+  changed_when: true
+  notify: Reload eve autoclean agent
+
+- name: Assert the signature is what the deploy intended
+  # An unchecked codesign is how a binary ends up ad-hoc without anyone
+  # noticing, and the only symptom is TCC prompts returning a week later.
+  ansible.builtin.command: "/usr/bin/codesign --verify --strict {{ eve_autoclean_repo }}/target/release/eve"
+  changed_when: false
+
+- name: Report that grants will not survive a rebuild while ad-hoc signed
+  ansible.builtin.debug:
+    msg: >-
+      Signed ad-hoc. Every rebuild will invalidate eve's Full Disk Access and
+      re-prompt. Run scripts/create-signing-identity.sh once, then deploy with
+      -e eve_autoclean_signing_identity='HARTLE.TECH eve'.
+  when: eve_autoclean_signing_identity == '-'
+
+# ----------------------------------------------------------------- install
+
+- name: Install the user-facing binary
+  # Deployed out of the repo so the agent keeps working if the repo is moved,
+  # rebuilt mid-run, or checked out to another branch.
+  ansible.builtin.copy:
+    src: "{{ eve_autoclean_repo }}/target/release/eve"
+    dest: "{{ eve_autoclean_bin }}"
+    mode: '0755'
+    remote_src: true
+  notify: Reload eve autoclean agent
+
+- name: Ensure the privileged helper's directory exists
+  # /usr/local/libexec is not present on a stock macOS — /usr/local itself only
+  # appears once something creates it, and Homebrew on Apple Silicon lives in
+  # /opt/homebrew, so nothing else ever does. Without this the copy below fails
+  # with "Destination directory /usr/local/libexec does not exist", after the
+  # operator has already typed their password.
+  ansible.builtin.file:
+    path: "{{ eve_autoclean_helper_dir }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: '0755'
+  become: true
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Install the root-owned privileged helper
+  # eve verifies this is root-owned and not group/world-writable before it will
+  # run it under sudo. If those permissions drift, eve silently falls back to
+  # re-executing itself rather than trusting a helper that only looks like one.
+  ansible.builtin.copy:
+    src: "{{ eve_autoclean_repo }}/target/release/eve"
+    dest: "{{ eve_autoclean_helper }}"
+    owner: root
+    group: wheel
+    mode: '0755'
+    remote_src: true
+  become: true
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Assert both installed copies carry the signature
+  # Signing happens before the copies precisely so that both inherit it — the
+  # helper used to be a straight copy of the raw cargo output and was left
+  # ad-hoc while the user-facing binary was signed. Checking each copy is what
+  # turns "should have inherited it" into something the play knows.
+  ansible.builtin.command: "/usr/bin/codesign --verify --strict {{ item }}"
+  changed_when: false
+  loop: "{{ [eve_autoclean_bin] + ([eve_autoclean_helper] if eve_autoclean_manage_sudoers | bool else []) }}"
+
+- name: Install the LaunchAgent plist
+  ansible.builtin.template:
+    src: tech.hartle.eve.autoclean.plist.j2
+    dest: "{{ eve_autoclean_plist }}"
+    mode: '0644'
+  notify: Reload eve autoclean agent
+
+- name: Grant passwordless root to the privileged worker
+  # validate runs visudo -cf against a temp copy BEFORE the file is put in
+  # place. Without it, a malformed drop-in breaks sudo for the whole machine
+  # and there is no way back in without a recovery boot.
+  ansible.builtin.template:
+    src: eve-autoclean.sudoers.j2
+    dest: "{{ eve_autoclean_sudoers_path }}"
+    owner: root
+    group: wheel
+    mode: '0440'
+    validate: '/usr/sbin/visudo -cf %s'
+  become: true
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Clear the cooldown stamp so a fresh apply is not suppressed
+  ansible.builtin.file:
+    path: "{{ eve_autoclean_state_dir }}/last-run"
+    state: absent
+  when: eve_autoclean_reset_cooldown | bool
+
+# ------------------------------------------------------- retire the old tool
+
+- name: Remove the superseded shell guard and its sudoers rule
+  # The two-pass user/root wrapper is gone: eve does the split itself via the
+  # catalog's run-context field and the privileged worker, neither of which can
+  # hang under launchd the way the osascript escalation did.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ eve_autoclean_bin_dir }}/eve-autoclean"
+
+- name: Load the agent now if anything changed
+  ansible.builtin.meta: flush_handlers
+
+# ------------------------------------------------------------------ verify
+
+- name: Verify the agent is registered with launchd
+  ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}/{{ eve_autoclean_label }}"
+  register: eve_autoclean_agent_state
+  changed_when: false
+
+- name: Verify passwordless sudo actually resolves
+  # The whole point of the sudoers file. `sudo -n -l` resolves the rule without
+  # executing anything; a non-zero exit here means every unattended privileged
+  # run would fail silently.
+  ansible.builtin.command: "/usr/bin/sudo -n -l {{ eve_autoclean_helper }} __worker"
+  register: eve_autoclean_sudo_check
+  changed_when: false
+  failed_when: eve_autoclean_sudo_check.rc != 0
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Verify the helper is genuinely root-owned
+  # A helper that is not root-owned makes the sudoers grant an escalation hole
+  # rather than a boundary, so assert it rather than assuming the copy worked.
+  ansible.builtin.stat:
+    path: "{{ eve_autoclean_helper }}"
+  register: eve_helper_stat
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Assert helper ownership and permissions
+  ansible.builtin.assert:
+    that:
+      - eve_helper_stat.stat.exists
+      - eve_helper_stat.stat.pw_name == 'root'
+      - not eve_helper_stat.stat.wgrp
+      - not eve_helper_stat.stat.woth
+    fail_msg: >-
+      {{ eve_autoclean_helper }} is not root-owned and non-writable by others.
+      The sudoers grant would be a privilege-escalation hole; refusing.
+  when: eve_autoclean_manage_sudoers | bool
+
+- name: Prove the installed binary runs
+  ansible.builtin.command: "{{ eve_autoclean_bin }} --version"
+  register: eve_version
+  changed_when: false
+
+- name: Report installed state
+  ansible.builtin.debug:
+    msg:
+      - "version  : {{ eve_version.stdout }}"
+      - "agent    : {{ eve_autoclean_label }} (every {{ eve_autoclean_interval }}s)"
+      - "trigger  : free < {{ eve_autoclean_threshold_gb }} GB on /System/Volumes/Data"
+      - "cooldown : {{ eve_autoclean_cooldown_sec }}s between real runs"
+      - "binary   : {{ eve_autoclean_bin }}"
+      - "helper   : {{ eve_autoclean_helper if eve_autoclean_manage_sudoers | bool else 'not installed' }}"
+      - "log      : {{ eve_autoclean_log_dir }}/eve-autoclean.log"
+      - "journal  : {{ eve_autoclean_state_dir }}/journal.jsonl"
+      - "sudoers  : {{ eve_autoclean_sudoers_path if eve_autoclean_manage_sudoers | bool else 'not managed' }}"
+      - "launchd  : {{ 'registered' if eve_autoclean_agent_state.rc == 0 else 'NOT REGISTERED' }}"

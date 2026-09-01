@@ -1,0 +1,16 @@
+{
+  "name": "eve — macOS cleaner and disk analyser",
+  "short_name": "eve",
+  "description": "Reclaim disk space on macOS without losing anything you wanted.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#05080a",
+  "theme_color": "#05080a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/mark.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

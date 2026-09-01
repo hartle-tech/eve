@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="eve">
+  <defs>
+    <linearGradient id="eve-mark" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#3ed3c6"/>
+      <stop offset="1" stop-color="#1f9e97"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8.4" fill="url(#eve-mark)"/>
+  <!-- The two panels of the app icon: what eve keeps, and what it has cleared. -->
+  <path d="M11.1 9.4h4.9v13.2h-4.9a1.7 1.7 0 0 1-1.7-1.7V11.1a1.7 1.7 0 0 1 1.7-1.7z" fill="#fff"/>
+  <path d="M16 9.4h4.9a1.7 1.7 0 0 1 1.7 1.7v9.8a1.7 1.7 0 0 1-1.7 1.7H16"
+        fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

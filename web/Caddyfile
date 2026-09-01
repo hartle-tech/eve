@@ -1,0 +1,63 @@
+# In-pod Caddy serving eve.hartle.tech.
+# Edge TLS and routing are handled by the host Caddy on the VPS; this listens
+# on :8080 behind a ClusterIP service.
+
+:8080 {
+	root * /srv
+	encode gzip zstd
+	file_server
+
+	# Cache-Control is set ONLY by the three matchers below, never in the
+	# blanket header block further down. A bare `Cache-Control` in that block
+	# wins over every matcher here — verified against a running pod, where it
+	# silently flattened all three of these to its own value. The page would
+	# then have been cached for ten minutes at the edge, which is precisely the
+	# failure the first matcher exists to prevent, and nothing would have said
+	# so.
+	#
+	# The page changes on every deploy and a long edge cache makes a shipped fix
+	# look like it never went out. The images beside it are content-addressed by
+	# their own filenames and never change under a given name.
+	@html path / /index.html /docs/ /docs/*.html
+	header @html Cache-Control "public, max-age=60"
+
+	@immutable path /shots/*
+	header @immutable Cache-Control "public, max-age=604800, immutable"
+
+	@assets not path / /index.html /docs/ /docs/*.html /shots/*
+	header @assets Cache-Control "public, max-age=600"
+
+	# Go's mime table has no entry for .webmanifest, so without this it goes
+	# out as application/octet-stream and the install prompt never appears.
+	@manifest path /site.webmanifest
+	header @manifest Content-Type "application/manifest+json"
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "interest-cohort=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Everything the page needs comes from this origin: no CDN, no font
+		# service, no analytics. A script-src that has to name a third party is
+		# a third party that can change what runs on the page.
+		#
+		# 'unsafe-inline' is not here and must not be: there is no inline script
+		# and no inline style anywhere in this site, including the generated
+		# /docs pages. An inline block would be dropped in silence.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	}
+
+	# /docs and /docs/ are the same page; without this the bare path 404s.
+	@docsbare path /docs
+	redir @docsbare /docs/ 301
+
+	# A landing page plus a handful of doc pages: anything else is a typo, not
+	# a route. Serve the landing page rather than a bare Caddy 404.
+	handle_errors {
+		@404 expression {err.status_code} == 404
+		rewrite @404 /index.html
+		file_server
+	}
+}

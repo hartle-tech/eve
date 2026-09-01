@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+
+# Python (legacy obliterate scripts, retiring end of Phase 1)
+__pycache__/
+*.pyc
+
+# Rust / Cargo
+target/
+**/target/
+
+# Tauri
+src-tauri/target/
+ui/dist/
+
+# Ansible run artifacts
+ansible/*.log
+ansible/run.stdout.log
+
+# graphify knowledge graph (regenerate with `graphify update .`)
+graphify-out/
+
+# scratch
+OUTPUT
+
+# Built app bundles
+dist/
+
+# Frontend build inputs. The built output in ui/ IS committed, so the .app can
+# still be assembled from a checkout without anyone having run npm.
+ui-src/node_modules/
+
+# The site's /docs, rendered from docs/*.md. The image build renders its own
+# copy; this one exists only for eyeballing the pages before a build, and
+# committing it would create a second source that can disagree with the first.
+web/_docs/

@@ -1,0 +1,33 @@
+# Managed by Ansible (eve_autoclean role). Do not edit by hand.
+#
+# Lets the low-disk LaunchAgent run eve's privileged categories (system caches
+# and logs, unified logs, sleepimage, hidden data directories, installer
+# leftovers, snapshot thinning) without a GUI admin dialog, which under launchd
+# would hang forever with nowhere to draw.
+#
+# WHY THIS IS NOW A REAL BOUNDARY
+#
+#   The grant names {{ eve_autoclean_helper }} — a root-owned, non-user-writable
+#   copy installed by this role. The previous rule pointed at a script in the
+#   operator's home directory and its own comment admitted the scoping was
+#   "organisational, not a security boundary", because anything able to write
+#   that file gained passwordless root.
+#
+#   The objection recorded then — not wanting to maintain a second copy of the
+#   commands — no longer applies: the worker is the same binary in a different
+#   mode, so there is nothing duplicated to drift.
+#
+#   eve verifies the ownership itself before using this path, and falls back to
+#   re-executing the invoking binary if it is not root-owned and not group- or
+#   world-writable. The role asserts the same thing after installing.
+#
+# WHAT ROOT ACTUALLY RECEIVES
+#
+#   A typed, validated plan on stdin — never a shell string. The worker re-runs
+#   the entire safety funnel as root and does not trust the caller's verdict,
+#   only its request. A compromised parent cannot talk it into deleting
+#   something the protection policy forbids.
+#
+# The command path must match what eve executes, character for character;
+# sudo does no interpreter or symlink resolution.
+{{ eve_autoclean_user }} ALL=(root) NOPASSWD: {{ eve_autoclean_helper }} __worker

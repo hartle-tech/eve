@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/eve-core",
+    "crates/eve-catalog",
+    "crates/eve-engines",
+    "crates/eve-cli",
+    "crates/eve-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["HARTLE.TECH <contact@hartle.tech>"]
+repository = "https://github.com/hartle-tech/eve"
+homepage = "https://eve.hartle.tech"
+
+[workspace.dependencies]
+eve-core = { path = "crates/eve-core" }
+eve-catalog = { path = "crates/eve-catalog" }
+eve-engines = { path = "crates/eve-engines" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+walkdir = "2"
+rayon = "1"
+glob = "0.3"
+dirs = "6"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+ratatui = "0.29"
+sysinfo = "0.33"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

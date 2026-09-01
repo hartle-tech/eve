@@ -1,0 +1,725 @@
+---
+# playbook.yml — bootstrap this MacBook from scratch (cleanup + reinstall).
+#
+# Usage:
+#   ansible-galaxy collection install community.general
+#   ansible-playbook -i hosts.ini playbook.yml --ask-become-pass
+#
+# Selective runs:
+#   --tags cleanup            # only run the obliterator
+#   --tags brew,casks         # only install packages
+#   --tags shell              # only reset prezto / default shell
+#   --tags lang               # only pyenv/rustup/node toolchains
+#   --skip-tags cleanup       # everything except cleanup
+#
+# Extra knobs (pass with -e):
+#   -e cleanup_args="--execute --yes --privileged"  # include root categories
+#   -e cleanup_dry_run=true                 # cleanup runs dry instead of --execute
+#
+# What's NOT automated (must be done manually after the play finishes):
+#   - Apple ID / iCloud sign-in
+#   - Tailscale `tailscale up` auth
+#   - ProtonVPN login
+#   - Chrome / Claude / Codex sign-in
+#   - 1Password unlock + Touch ID enrollment
+#   - macOS System Settings beyond `defaults write` reach
+
+- name: Eve — full MacBook bootstrap
+  hosts: local
+  gather_facts: yes
+  vars:
+    home_dir: "{{ ansible_env.HOME }}"
+    brew_prefix: "/opt/homebrew"
+    brew_bin: "/opt/homebrew/bin/brew"
+    repo_root: "{{ playbook_dir | dirname }}"
+    cleanup_args: "--execute --yes"
+    cleanup_dry_run: false
+
+    # Taps required for the management CLIs below.
+    homebrew_taps:
+      - homebrew/services
+      - hashicorp/tap                  # terraform
+      - controlplaneio-fluxcd/tap      # flux-operator-mcp
+
+    # Top-level CLI formulas. Rule of thumb:
+    #   IN  → clients / controllers / encryption CLIs (talk to remote systems)
+    #   OUT → platforms / servers / things that belong inside a k8s cluster
+    #         (e.g. openbao deliberately excluded — runs as a server in-cluster)
+    homebrew_formulas:
+      # core
+      - git
+      - gnupg
+      - pinentry-mac
+      - openssl@3
+      - readline
+      - sqlite
+      - xz
+      # ansible itself (needed by this playbook on a fresh box) + cloud CLIs
+      - ansible
+      - awscli
+      # zsh-friendlies + everyday CLIs
+      - bat
+      - btop
+      - eza
+      - fd
+      - fzf
+      - jq
+      - yq
+      - ripgrep
+      - tree
+      - lazygit
+      - gh
+      - git-flow
+      - httpie
+      - websocat
+      - doggo
+      - nmap
+      - exiftool
+      - icoutils
+      - icloudpd
+      - pandoc
+      - age
+      - sops
+      # IaC clients (controllers, not platforms)
+      - hashicorp/tap/terraform
+      - opentofu
+      - terragrunt
+      # k8s clients
+      - kubernetes-cli
+      - kustomize
+      - krew
+      - helm
+      - k9s
+      - stern
+      - flux-operator-mcp
+      # python
+      - python@3.13
+      - python@3.14
+      - pyenv
+      - pipx
+      - virtualenv
+      # node / js
+      - node
+      # jvm (Gradle uses this for the Android project under ~/Projects)
+      - openjdk@17
+      # version managers
+      - mise
+      # phone / camera bits
+      - gphoto2
+      - libimobiledevice
+
+    # GUI apps as casks. Manual /Applications installs replaced by these where possible.
+    homebrew_casks:
+      # browsers / editors
+      - google-chrome
+      - cursor
+      - iterm2
+      # coding / AI tools
+      - claude                  # Claude Desktop
+      # Antigravity is intentionally NOT installed. The IDE auto-updates
+      # itself to 2.0 (Gemini-only) on launch — pinning to the IDE .dmg
+      # is pointless because the app rewrites itself the first time you
+      # open it. See the apps/antigravity tag block below: it actively
+      # removes the app + zaps brew state on every run.
+      # network
+      - tailscale-app
+      - protonvpn
+      # media / utility
+      - vlc
+      - appcleaner
+      - omnidisksweeper
+      - the-unarchiver
+      # CLIs that ship as casks
+      - 1password-cli
+      - gcloud-cli
+      # creative
+      # davinci-resolve has no homebrew cask (Blackmagic requires registration);
+      # handled below by opening the download page.
+      - adobe-creative-cloud    # CC manager — sign in, then download Lightroom from inside it
+      # niche
+      - kicad
+
+    # Apps with no reliable Homebrew cask — handled below.
+    # Set these to direct .dmg / installer URLs if/when you have them.
+    codex_installer_url: ""           # paste OpenAI Codex installer URL when known
+
+    # Canon EOS Utility — stable Canon CDN URL for the EOS RP-compatible build.
+    # If Canon ever rotates the path, paste the new .dmg / .dmg.zip URL here.
+    canon_eos_utility_url: "https://gdlp01.c-wss.com/gds/8/0200007518/01/EU3Installer-M3.20.10.1.dmg.zip"
+
+    # DaVinci Resolve (free): leave empty to use Blackmagic's registration API
+    # (slower but always picks up the latest build). Set to a direct .zip URL
+    # to bypass the API (useful when you already grabbed a verify=… presigned
+    # link from the browser; those expire fast so don't commit them long-term).
+    davinci_resolve_url: ""
+
+    # ----- Decoy form fields for the Blackmagic registration POST -----
+    # Blackmagic doesn't verify these. Override if you want plausible values.
+    bmd_firstname: "Hartle"
+    bmd_lastname:  "Tech"
+    bmd_email:     "contact@hartle.tech"
+    bmd_phone:     "1234567890"
+    bmd_country:   "us"
+    bmd_state:     "California"
+    bmd_city:      "San Francisco"
+
+    # Python versions to install via pyenv (in addition to the brew pythons above).
+    pyenv_versions:
+      - "3.14.3"
+
+    # Default global pyenv version (will be `pyenv global <this>`).
+    pyenv_global: "3.14.3"
+
+    # mise tools to install after bootstrap (only if you have ~/.config/mise/config.toml).
+    mise_install: true
+
+  pre_tasks:
+    - name: macOS only
+      ansible.builtin.fail:
+        msg: "This playbook targets macOS."
+      when: ansible_system != "Darwin"
+
+    - name: Ensure Xcode Command Line Tools are installed
+      ansible.builtin.shell: |
+        if ! xcode-select -p >/dev/null 2>&1; then
+          touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+          PROD=$(softwareupdate -l 2>/dev/null | grep "Command Line Tools" | tail -1 | awk -F'*' '{print $2}' | sed 's/^ *//')
+          [ -n "$PROD" ] && softwareupdate -i "$PROD" --verbose
+          rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+        fi
+        xcode-select -p
+      register: clt
+      changed_when: "'install' in clt.stdout|lower"
+      become: yes
+      tags: [bootstrap]
+
+    - name: Install Homebrew if missing
+      ansible.builtin.shell: |
+        if [ ! -x "{{ brew_bin }}" ]; then
+          NONINTERACTIVE=1 /bin/bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        "{{ brew_bin }}" --version
+      register: brew_install
+      changed_when: "'Installation successful' in brew_install.stdout"
+      tags: [bootstrap]
+
+  tasks:
+    # ============================================================ CLEANUP
+    - name: "Run eve clean (dry-run unless -e cleanup_dry_run=false)"
+      ansible.builtin.command: >
+        {{ ansible_env.HOME }}/.local/bin/eve clean
+        {{ '' if cleanup_dry_run else cleanup_args }}
+      args:
+        chdir: "{{ repo_root }}"
+      register: eve_clean
+      # eve prints "Reclaimed:" only on a real run; a dry run says
+      # "Reclaimable:" and is correctly reported as unchanged.
+      changed_when: "'Reclaimed:' in eve_clean.stdout"
+      tags: [cleanup, never]   # tag 'never' → opt-in only with --tags cleanup
+
+    - name: Show eve clean summary
+      ansible.builtin.debug:
+        msg: "{{ eve_clean.stdout_lines[-15:] }}"
+      when: eve_clean is defined and eve_clean.stdout is defined
+      tags: [cleanup, never]
+
+    # ============================================================ TAPS
+    - name: Tap required Homebrew repositories
+      community.general.homebrew_tap:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ homebrew_taps }}"
+      tags: [brew, taps]
+
+    # ============================================================ FORMULAS
+    - name: Install Homebrew formulas (idempotent)
+      community.general.homebrew:
+        name: "{{ homebrew_formulas }}"
+        state: present
+        update_homebrew: yes
+        upgrade_all: no
+      tags: [brew, formulas]
+
+    # ============================================================ CASKS
+    # pkg-based casks (tailscale-app, protonvpn, 1password-cli, gcloud-cli,
+    # davinci-resolve, adobe-creative-cloud) shell out to `sudo installer -pkg ...`
+    # from inside brew. Ansible runs brew with a piped stdin, so that child sudo
+    # has no TTY and fails with "a terminal is required". Fix: feed it the already-
+    # prompted become password via SUDO_ASKPASS, then wipe the helper.
+    - name: Install Homebrew casks with transient SUDO_ASKPASS
+      block:
+        - name: Write transient sudo askpass helper
+          ansible.builtin.copy:
+            dest: "{{ home_dir }}/.eve_askpass.sh"
+            mode: '0700'
+            # Prefer the templatable ansible_become_password (set via -e or some
+            # --ask-become-pass paths). Fall back to the ANSIBLE_BECOME_PASS env
+            # var — that's the only thing populated when the password came in
+            # via --become-password-file.
+            content: |
+              #!/bin/sh
+              printf '%s\n' "{{ ansible_become_password | default(lookup('env', 'ANSIBLE_BECOME_PASS')) | default('') }}"
+          no_log: true
+          changed_when: false   # transient plumbing — not real drift
+
+        - name: Install Homebrew casks (GUI apps)
+          community.general.homebrew_cask:
+            name: "{{ item }}"
+            state: present
+            accept_external_apps: yes
+            # Some casks (e.g. tailscale-app, protonvpn) install a kext/system-extension;
+            # you'll have to approve in System Settings → Privacy & Security afterwards.
+          environment:
+            SUDO_ASKPASS: "{{ home_dir }}/.eve_askpass.sh"
+          loop: "{{ homebrew_casks }}"
+          register: cask_install
+          failed_when:
+            - cask_install is failed
+            - "'It seems there is already an App at' not in (cask_install.msg | default(''))"
+      always:
+        - name: Remove sudo askpass helper
+          ansible.builtin.file:
+            path: "{{ home_dir }}/.eve_askpass.sh"
+            state: absent
+          changed_when: false   # transient plumbing — not real drift
+      tags: [brew, casks]
+
+    # ============================================================ LANGUAGES
+    - name: Install pyenv Python versions
+      ansible.builtin.command: "{{ brew_prefix }}/bin/pyenv install --skip-existing {{ item }}"
+      loop: "{{ pyenv_versions }}"
+      environment:
+        PYENV_ROOT: "{{ home_dir }}/.pyenv"
+      register: pyenv_inst
+      changed_when: "'Installed' in pyenv_inst.stdout"
+      tags: [lang, python]
+
+    - name: Set global pyenv version
+      ansible.builtin.command: "{{ brew_prefix }}/bin/pyenv global {{ pyenv_global }}"
+      environment:
+        PYENV_ROOT: "{{ home_dir }}/.pyenv"
+      changed_when: false
+      tags: [lang, python]
+
+    - name: Install rustup + stable toolchain
+      ansible.builtin.shell: |
+        if ! command -v rustup >/dev/null 2>&1 && [ ! -x "{{ home_dir }}/.cargo/bin/rustup" ]; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path
+        fi
+        "{{ home_dir }}/.cargo/bin/rustup" default stable
+      args:
+        creates: "{{ home_dir }}/.cargo/bin/rustup"
+      tags: [lang, rust]
+
+    - name: Install mise-managed tools (if mise config exists)
+      ansible.builtin.command: "{{ brew_prefix }}/bin/mise install -y"
+      args:
+        chdir: "{{ home_dir }}"
+      when: mise_install and (home_dir + '/.config/mise/config.toml') is exists
+      changed_when: false
+      tags: [lang, mise]
+
+    # ============================================================ CLAUDE CLI
+    - name: Install Claude Code CLI
+      ansible.builtin.shell: |
+        if ! command -v claude >/dev/null 2>&1; then
+          curl -fsSL https://claude.ai/install.sh | bash
+        fi
+      args:
+        creates: "{{ home_dir }}/.local/bin/claude"
+      tags: [lang, claude]
+
+    # ============================================================ CODEX (no cask)
+    - name: Download + mount + install OpenAI Codex (if URL provided)
+      when: codex_installer_url | length > 0
+      block:
+        - name: Download Codex installer
+          ansible.builtin.get_url:
+            url: "{{ codex_installer_url }}"
+            dest: "/tmp/codex_installer.dmg"
+            mode: '0644'
+        - name: Attach Codex DMG
+          ansible.builtin.command: "hdiutil attach -nobrowse -quiet /tmp/codex_installer.dmg"
+        - name: Copy Codex.app to /Applications
+          ansible.builtin.shell: |
+            src=$(ls -d "/Volumes/"*Codex*"/Codex.app" 2>/dev/null | head -1)
+            [ -z "$src" ] && { echo "Codex.app not found in mounted DMG"; exit 1; }
+            cp -R "$src" /Applications/
+          become: yes
+        - name: Detach Codex DMG
+          ansible.builtin.shell: "hdiutil detach $(mount | awk '/Codex/{print $1; exit}') -quiet || true"
+      tags: [apps, codex]
+
+    - name: Note — no Codex URL configured
+      ansible.builtin.debug:
+        msg: "Set codex_installer_url to install Codex automatically, or grab it from https://openai.com after sign-in."
+      when: codex_installer_url | length == 0
+      tags: [apps, codex]
+
+    # ============================================================ DAVINCI RESOLVE
+    # Blackmagic gates downloads behind a registration form (no brew cask).
+    # Flow: list latest free DaVinci Resolve via their public downloads JSON,
+    # POST a registration form to receive the real .zip URL, then unzip →
+    # mount inner .dmg → install inner .pkg → detach. Decoy form fields are
+    # configured as bmd_* vars at the top of the play.
+    - name: Check whether DaVinci Resolve is already installed
+      ansible.builtin.stat:
+        path: "/Applications/DaVinci Resolve/DaVinci Resolve.app"
+      register: davinci_app
+      tags: [apps, davinci]
+
+    - name: Install DaVinci Resolve
+      when: not davinci_app.stat.exists
+      block:
+        # ----- Check for cached .dmg first so we skip URL work + download -----
+        - name: Check for cached DaVinci .dmg in /tmp
+          ansible.builtin.find:
+            paths: /tmp
+            patterns: "DaVinci_Resolve*.dmg"
+            recurse: no
+          register: davinci_dmg_cached
+
+        # ----- URL resolution: prefer override, else hit Blackmagic API -----
+        - name: Use override URL when provided
+          ansible.builtin.set_fact:
+            davinci_zip_url: "{{ davinci_resolve_url }}"
+          when:
+            - davinci_resolve_url | length > 0
+            - davinci_dmg_cached.files | length == 0
+
+        - name: Resolve URL via Blackmagic registration API
+          when:
+            - davinci_resolve_url | length == 0
+            - davinci_dmg_cached.files | length == 0
+          block:
+            - name: Fetch Blackmagic downloads index
+              ansible.builtin.uri:
+                url: https://www.blackmagicdesign.com/api/support/us/downloads.json
+                return_content: yes
+                headers:
+                  Accept: application/json
+                  User-Agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+              register: bmd_downloads
+
+            - name: Select latest stable DaVinci Resolve (free, Mac)
+              # Mac platform key is "Mac OS X" (with spaces). Regex uses \.
+              # (one backslash) — single-quoted YAML doesn't escape, so `\\.`
+              # would reach Python as escaped backslash + wildcard and match
+              # nothing.
+              ansible.builtin.set_fact:
+                bmd_download_id: >-
+                  {{
+                    (bmd_downloads.json.downloads
+                      | rejectattr('name', 'search', 'Studio', ignorecase=True)
+                      | rejectattr('name', 'search', 'Beta',   ignorecase=True)
+                      | selectattr('name', 'match',  '^DaVinci Resolve [0-9]+(\.[0-9]+)+$')
+                      | list)[0].urls['Mac OS X'][0].downloadId
+                  }}
+
+            - name: Show selected DaVinci Resolve download id
+              ansible.builtin.debug:
+                msg: "Resolved DaVinci Resolve download id → {{ bmd_download_id }}"
+
+            - name: Register with Blackmagic to obtain the .zip URL
+              ansible.builtin.uri:
+                url: "https://www.blackmagicdesign.com/api/register/us/download/{{ bmd_download_id }}"
+                method: POST
+                body_format: json
+                return_content: yes
+                status_code: [200, 302]
+                headers:
+                  Content-Type: application/json
+                  Accept: "*/*"
+                  Origin: https://www.blackmagicdesign.com
+                  Referer: https://www.blackmagicdesign.com/products/davinciresolve
+                  User-Agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                body:
+                  firstname: "{{ bmd_firstname }}"
+                  lastname:  "{{ bmd_lastname }}"
+                  email:     "{{ bmd_email }}"
+                  phone:     "{{ bmd_phone }}"
+                  country:   "{{ bmd_country }}"
+                  state:     "{{ bmd_state }}"
+                  city:      "{{ bmd_city }}"
+                  product:   "DaVinci Resolve"
+                  platform:  "Mac OS X"
+                  downloadOnly: true
+                  policyaccepted: true
+                  hasagreedtomarketing: false
+              register: bmd_register
+
+            - name: Store resolved URL
+              ansible.builtin.set_fact:
+                davinci_zip_url: "{{ bmd_register.content | trim }}"
+
+        - name: Download + unpack DaVinci archive (skipped when .dmg is cached)
+          when: davinci_dmg_cached.files | length == 0
+          block:
+            - name: Download DaVinci Resolve archive
+              ansible.builtin.get_url:
+                url: "{{ davinci_zip_url }}"
+                dest: /tmp/davinci-resolve.zip
+                mode: '0644'
+                timeout: 600
+
+            - name: Unpack archive
+              ansible.builtin.unarchive:
+                src: /tmp/davinci-resolve.zip
+                dest: /tmp/
+                remote_src: yes
+                extra_opts: [-o]
+
+            - name: Remove zip after extraction
+              ansible.builtin.file:
+                path: /tmp/davinci-resolve.zip
+                state: absent
+              changed_when: false
+
+        - name: Locate inner .dmg
+          ansible.builtin.find:
+            paths: /tmp
+            patterns: "DaVinci_Resolve*.dmg"
+            recurse: no
+          register: davinci_dmg
+
+        - name: Mount, install pkg, detach
+          # hdiutil -quiet suppresses stdout entirely, so we have to drop it to
+          # parse the mount point. Tab-delimited columns: device, type, mount.
+          # `awk -F'\t' '{print $NF}'` gives the mount path even with spaces.
+          ansible.builtin.shell: |
+            set -euo pipefail
+            DMG="{{ davinci_dmg.files[0].path }}"
+            # If a prior failed run left it mounted, detach first.
+            for m in "/Volumes/Blackmagic DaVinci Resolve"*; do
+              [ -d "$m" ] && hdiutil detach "$m" -quiet || true
+            done
+            MNT=$(hdiutil attach -nobrowse "$DMG" | tail -1 | awk -F'\t' '{print $NF}' | sed 's/[[:space:]]*$//')
+            [ -n "$MNT" ] && [ -d "$MNT" ] || { echo "failed to determine mount point"; exit 1; }
+            PKG=$(find "$MNT" -maxdepth 3 -iname '*Resolve*.pkg' | head -1)
+            [ -n "$PKG" ] || { echo "no pkg found under $MNT"; exit 1; }
+            /usr/sbin/installer -pkg "$PKG" -target /
+            hdiutil detach "$MNT" -quiet
+          become: yes
+      always:
+        - name: Clean DaVinci .dmg artefact
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ davinci_dmg.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: davinci_app is defined
+          changed_when: false
+      tags: [apps, davinci]
+
+    # ============================================================ CANON EOS UTILITY
+    # Canon gates the download behind a serial-number form on the EOS RP
+    # support page. Paste the resolved .dmg URL into canon_eos_utility_url
+    # (top of play) — the playbook will mount + install the inner .pkg.
+    - name: Check whether Canon EOS Utility is already installed
+      ansible.builtin.stat:
+        path: "/Applications/Canon Utilities/EOS Utility/EOS Utility.app"
+      register: canon_eos_app
+      tags: [apps, canon]
+
+    - name: Open Canon EOS RP support page (no URL configured)
+      ansible.builtin.command:
+        cmd: open "https://www.usa.canon.com/support/p/eos-rp"
+      changed_when: false
+      when:
+        - not canon_eos_app.stat.exists
+        - canon_eos_utility_url | length == 0
+      tags: [apps, canon]
+
+    - name: Install Canon EOS Utility from configured URL
+      when:
+        - not canon_eos_app.stat.exists
+        - canon_eos_utility_url | length > 0
+      block:
+        - name: Set Canon installer paths
+          # Detect a .zip wrapper (regardless of any query string).
+          ansible.builtin.set_fact:
+            canon_workdir: /tmp/canon_eos_utility
+            canon_is_zip: "{{ canon_eos_utility_url.split('?')[0].endswith('.zip') }}"
+
+        - name: Prepare Canon workdir
+          ansible.builtin.file:
+            path: "{{ canon_workdir }}"
+            state: directory
+            mode: '0755'
+
+        - name: Download Canon EOS Utility archive
+          ansible.builtin.get_url:
+            url: "{{ canon_eos_utility_url }}"
+            dest: "{{ canon_workdir }}/payload{{ '.zip' if canon_is_zip else '.dmg' }}"
+            mode: '0644'
+            timeout: 600
+
+        - name: Unzip when payload is a .dmg.zip
+          ansible.builtin.unarchive:
+            src: "{{ canon_workdir }}/payload.zip"
+            dest: "{{ canon_workdir }}/"
+            remote_src: yes
+            extra_opts: [-o]
+          when: canon_is_zip
+
+        - name: Locate Canon .dmg
+          ansible.builtin.find:
+            paths: "{{ canon_workdir }}"
+            patterns: "*.dmg"
+            recurse: yes
+          register: canon_dmg
+
+        - name: Mount, install pkg, detach
+          # hdiutil -quiet suppresses stdout entirely, so we drop it and parse
+          # the tab-delimited last line for the mount path.
+          ansible.builtin.shell: |
+            set -euo pipefail
+            DMG="{{ canon_dmg.files[0].path }}"
+            # Detach any leftover Canon-installer mount before re-attaching.
+            for m in "/Volumes/EOS Utility"* "/Volumes/Canon"*; do
+              [ -d "$m" ] && hdiutil detach "$m" -quiet || true
+            done
+            MNT=$(hdiutil attach -nobrowse "$DMG" | tail -1 | awk -F'\t' '{print $NF}' | sed 's/[[:space:]]*$//')
+            [ -n "$MNT" ] && [ -d "$MNT" ] || { echo "failed to determine mount point"; exit 1; }
+            PKG=$(find "$MNT" -maxdepth 4 -iname '*.pkg' | head -1)
+            [ -n "$PKG" ] || { echo "no pkg found under $MNT"; exit 1; }
+            /usr/sbin/installer -pkg "$PKG" -target /
+            hdiutil detach "$MNT" -quiet
+          become: yes
+      always:
+        - name: Clean Canon installer workdir
+          ansible.builtin.file:
+            path: "{{ canon_workdir | default('/tmp/canon_eos_utility') }}"
+            state: absent
+          changed_when: false
+      tags: [apps, canon]
+
+    # ============================================================ ANTIGRAVITY (UNINSTALL)
+    # We deliberately ensure Antigravity is *absent*. The IDE flavor (1.x,
+    # multi-model with Claude in picker) is the only version worth running, but
+    # its in-app updater rewrites the bundle to 2.0 (Gemini-only) on first
+    # launch — there's no per-user "stay on IDE" channel. So the playbook
+    # enforces removal of both the .app and the brew cask state on every run.
+    - name: Quit running Antigravity (if any)
+      ansible.builtin.command: pkill -x Antigravity
+      changed_when: false
+      failed_when: false
+      tags: [apps, antigravity]
+
+    # Brew tracks installed casks purely by Caskroom directory existence, so
+    # an `rm -rf` here is the authoritative way to remove the cask state.
+    # `brew uninstall --cask antigravity` is fragile after a partial `--zap`
+    # failure (the staged backup app trips an "already an App at" error and
+    # Full Disk Access is needed for some zap paths). Direct removal sidesteps
+    # both issues and is idempotent on its own.
+    - name: Remove antigravity brew Caskroom (de-registers the cask)
+      ansible.builtin.file:
+        path: /opt/homebrew/Caskroom/antigravity
+        state: absent
+      tags: [apps, antigravity]
+
+    - name: Remove leftover agy shim if it still points at the (removed) cask
+      ansible.builtin.file:
+        path: /opt/homebrew/bin/agy
+        state: absent
+      tags: [apps, antigravity]
+
+    - name: Remove /Applications/Antigravity.app (lingering, e.g. from a 2.0 auto-update)
+      ansible.builtin.file:
+        path: /Applications/Antigravity.app
+        state: absent
+      tags: [apps, antigravity]
+
+    # The Antigravity CLI is the *useful* surface area for this project: a
+    # single `agy` binary, no Electron GUI, no in-app updater rewriting itself
+    # into 2.0. Google's install script drops it at ~/.local/bin/agy and
+    # self-skips when present.
+    - name: Install Antigravity CLI (agy) via Google's install script
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+      args:
+        executable: /bin/bash
+        creates: "{{ home_dir }}/.local/bin/agy"
+      tags: [apps, antigravity]
+    - name: Set zsh as default shell
+      ansible.builtin.user:
+        name: "{{ ansible_env.USER }}"
+        shell: /bin/zsh
+      become: yes
+      tags: [shell]
+
+    - name: Clone zprezto if missing
+      # update: no → don't touch an existing checkout (user may have local
+      # tweaks). Re-running the playbook should be a no-op against an existing
+      # ~/.zprezto.
+      ansible.builtin.git:
+        repo: https://github.com/sorin-ionescu/prezto.git
+        dest: "{{ home_dir }}/.zprezto"
+        recursive: yes
+        version: master
+        update: no
+      tags: [shell, prezto]
+
+    - name: Link zprezto runcoms
+      # `ln -sf` is idempotent against an existing identical symlink, so this
+      # task is safe to mark non-changing for clean recaps.
+      ansible.builtin.shell: |
+        setopt EXTENDED_GLOB
+        for rcfile in "{{ home_dir }}"/.zprezto/runcoms/^README.md(.N); do
+          ln -sf "$rcfile" "{{ home_dir }}/.$(basename $rcfile)"
+        done
+      args:
+        executable: /bin/zsh
+      changed_when: false
+      tags: [shell, prezto]
+
+    # ============================================================ KUBERNETES PLUGINS
+    - name: Install kubectl krew plugins (ctx/ns/view-secret/tree/neat)
+      ansible.builtin.shell: |
+        export PATH="{{ home_dir }}/.krew/bin:{{ brew_prefix }}/bin:$PATH"
+        kubectl krew update >/dev/null 2>&1 || true
+        for plugin in ctx ns view-secret tree neat; do
+          kubectl krew install "$plugin" >/dev/null 2>&1 || true
+        done
+        kubectl krew list 2>/dev/null
+      args:
+        executable: /bin/zsh
+      register: krew_out
+      changed_when: false
+      tags: [k8s]
+
+  post_tasks:
+    - name: Report
+      ansible.builtin.debug:
+        msg: |
+          Bootstrap complete.
+
+          Manual follow-ups (not automatable):
+            - Apple ID / iCloud sign-in (System Settings)
+            - Touch ID, Wi-Fi, Bluetooth devices
+            - Tailscale: `tailscale up`  (or use --authkey for CI)
+            - ProtonVPN: launch & sign in
+            - 1Password: launch & unlock
+            - Chrome / Claude / Codex: sign in
+            - Adobe Creative Cloud: open it, sign in, download Lightroom
+            - DaVinci Resolve: open + accept license (free version)
+            - Canon EOS Utility: enter your EOS RP serial on Canon's
+              support page (now open in your browser), download the .dmg,
+              run the installer. Or paste the URL into canon_eos_utility_url
+              and re-run with `--tags canon` for an automated fetch+open.
+            - Codex: paste the OpenAI installer URL into codex_installer_url
+              and re-run with `--tags codex`.
+            - GPG: import your key (`gpg --import`)
+            - Approve system extensions in
+              System Settings → Privacy & Security
+            - Set git identity:
+                git config --global user.name  "Your Name"
+                git config --global user.email "you@example.com"
+
+          To re-run only cleanup:
+            ansible-playbook -i hosts.ini playbook.yml --tags cleanup
+          To re-run only brew install:
+            ansible-playbook -i hosts.ini playbook.yml --tags brew

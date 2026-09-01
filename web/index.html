@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>eve — reclaim disk space on macOS without losing anything you wanted</title>
+<meta name="description" content="A macOS cleaner, disk analyser and app uninstaller written in Rust. It reaches the hibernation image and the unified log store, refuses the things that only look like cache, and puts everything in the Trash first.">
+<meta name="theme-color" content="#05080a">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/mark.svg" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/eve.css">
+<meta property="og:title" content="eve">
+<meta property="og:description" content="Reclaim disk space on macOS without losing anything you wanted. Open source, no account, no telemetry.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://eve.hartle.tech/">
+<meta property="og:image" content="https://eve.hartle.tech/shots/eve-overview-1400.webp">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+
+<a class="skip" href="#reach">Skip to content</a>
+
+<header class="bar" id="bar">
+  <a class="wordmark" href="#top">
+    <img src="/mark.svg" alt="" width="23" height="23">
+    <span>eve</span>
+  </a>
+  <nav>
+    <a href="#reach">Features</a>
+    <a href="#gates">Safety</a>
+    <a href="/docs/">Docs</a>
+    <a class="hide-narrow" href="#support">Support</a>
+    <a href="#get" class="cta">Get eve</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<!-- ─────────────────────────────── hero ─────────────────────────────── -->
+<section class="hero">
+  <div class="glow" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <p class="eyebrow" data-reveal>macOS 14 and later · Apple silicon and Intel</p>
+    <h1 data-reveal>
+      Reclaim your disk.<br>
+      <span class="grad">Lose nothing you wanted.</span>
+    </h1>
+    <p class="lede" data-reveal>
+      A cleaner, disk analyser, app uninstaller and system monitor for macOS,
+      written in Rust. It reaches the things a user-level cleaner cannot — and
+      refuses the things that only look like cache.
+    </p>
+    <ul class="does" data-reveal>
+      <li><b>Reaches further</b> — the hibernation image, the unified log store, installer leftovers</li>
+      <li><b>Refuses what looks like cache</b> — iPhone backups, Photos libraries, anything misfiled</li>
+      <li><b>Trash by default</b> — and if the Trash is unavailable it refuses rather than deleting</li>
+      <li><b>Measures what a file really costs</b> — allocated blocks, not the size a sparse file claims</li>
+      <li><b>Uninstalls the leftovers too</b> — the bundle plus everything it scattered</li>
+      <li><b>One password, one session</b> — root arrives on a pipe and dies when eve does</li>
+    </ul>
+    <div class="actions" data-reveal>
+      <a class="btn primary" href="#get">Get eve</a>
+      <a class="btn ghost" href="https://github.com/hartle-tech/eve" rel="noopener">Source on GitHub</a>
+    </div>
+    <p class="fineprint" data-reveal>Free and open source · No account · No telemetry · Apache-2.0</p>
+  </div>
+
+  <figure class="hero-shot" data-reveal>
+    <img src="/shots/eve-overview-1400.webp"
+         srcset="/shots/eve-overview-700.webp 700w, /shots/eve-overview-1400.webp 1400w"
+         sizes="(max-width: 1120px) 94vw, 1080px"
+         alt="eve's Overview: a 228 GB volume with 1.7 GB free, 142 MB reclaimable, and a breakdown of where the space has gone."
+         width="1400" height="558" fetchpriority="high" decoding="async">
+  </figure>
+</section>
+
+<!-- ──────────────────────────── the pitch ──────────────────────────── -->
+<section class="strip">
+  <div class="pitch">
+    <h2 data-reveal>A cleaner is only worth having if you can trust it with the risky part.</h2>
+    <p data-reveal>
+      The space that is actually worth reclaiming does not sit in
+      <code>~/Library/Caches</code>. It is a sleep image the size of your RAM, a
+      log store that grows for months, installer packages nobody deleted, and
+      hidden directories on the data volume. Reaching those needs root — and
+      anything holding root near your files has to be careful in a way that can
+      be checked.
+    </p>
+    <p data-reveal>
+      So every deletion in eve — from the command line, the app, an unattended
+      run, or the root worker itself — passes the same five gates. There is no
+      second path, and the root worker re-runs the whole funnel rather than
+      trusting the verdict it was handed.
+    </p>
+  </div>
+</section>
+
+<!-- ─────────────────────────── features ────────────────────────────── -->
+<section class="feature" id="reach">
+  <div class="copy">
+    <p class="kicker" data-reveal>Clean</p>
+    <h3 data-reveal>The categories a user-level cleaner cannot reach.</h3>
+    <p data-reveal>
+      The hibernation image, the unified log store, leftover installer packages,
+      Xcode's derived data, and the hidden directories on the data volume. Run it
+      once to see the plan; nothing goes anywhere until you ask twice.
+    </p>
+    <p data-reveal>
+      Every category carries a risk tier that belongs to the <em>target</em>, not
+      to whoever is asking — so a forgotten flag cannot walk an unattended run
+      into something dangerous.
+    </p>
+  </div>
+  <div data-reveal>
+    <pre class="term"><code><span class="p">$</span> eve clean
+<span class="c">  preview only — nothing has been deleted</span>
+
+  User caches                     105 MB   safe
+  Per-user scratch space           37 MB   safe
+  Installer packages              1.2 GB   safe
+  Unified log store               680 MB   privileged
+  Sleep image                      16 GB   privileged
+  <span class="w">iOS device backups            skipped   never-auto</span>
+
+  <span class="k">17.9 GB reclaimable</span>
+
+<span class="p">$</span> eve clean --execute --privileged</code></pre>
+  </div>
+</section>
+
+<section class="feature reverse">
+  <div class="copy">
+    <p class="kicker" data-reveal>Machines</p>
+    <h3 data-reveal>Listed, sized, and left alone.</h3>
+    <p data-reveal>
+      Docker images, VMs and iOS simulators are shown with what they really cost
+      — but eve never touches them on its own, and never at all on an unattended
+      run. They take real work to rebuild, so removing one is your decision
+      rather than a heuristic's.
+    </p>
+  </div>
+  <div class="shot" data-reveal>
+    <img src="/shots/eve-machines-700.webp"
+         srcset="/shots/eve-machines-700.webp 700w, /shots/eve-machines-1400.webp 1400w"
+         sizes="(max-width: 900px) 92vw, 620px"
+         alt="eve's Machines pane, listing container storage and simulator runtimes with their sizes."
+         width="1400" height="558" loading="lazy" decoding="async">
+  </div>
+</section>
+
+<section class="feature">
+  <div class="copy">
+    <p class="kicker" data-reveal>Disk</p>
+    <h3 data-reveal>Where the space actually is.</h3>
+    <p data-reveal>
+      <code>eve analyze</code> measures allocated blocks rather than the length a
+      file claims. It is the difference between a directory that reports 108 GB
+      and a directory that is really costing you 4 — a sparse file, a clone, or a
+      compressed one all lie in the same direction.
+    </p>
+    <p data-reveal>
+      Which means the number you are shown is the number you would get back.
+    </p>
+  </div>
+  <div data-reveal>
+    <pre class="term"><code><span class="p">$</span> eve analyze ~/Projects
+
+  <span class="k">4.1 GB</span>  allocated      <span class="c">108 GB apparent</span>
+
+  2.6 GB   node_modules
+  810 MB   target
+  418 MB   .git
+  240 MB   graphify-out
+
+<span class="c">  sizes are st_blocks × 512 — what the volume
+  gives back, not what the inode advertises</span></code></pre>
+  </div>
+</section>
+
+<section class="feature reverse">
+  <div class="copy">
+    <p class="kicker" data-reveal>Applications</p>
+    <h3 data-reveal>Uninstall the app and everything it scattered.</h3>
+    <p data-reveal>
+      Dragging a bundle to the Trash leaves preferences, application support,
+      caches, saved state, launch agents and login items behind. eve finds them,
+      shows you the list, and removes the ones you keep ticked.
+    </p>
+    <p data-reveal>
+      Anything an app left in a protected location is named rather than silently
+      skipped, so you can tell a leftover that was removed from one that could
+      not be.
+    </p>
+  </div>
+  <div data-reveal>
+    <pre class="term"><code><span class="p">$</span> eve uninstall "Some App"
+
+  <span class="k">Some App.app</span>                       412 MB
+  ~/Library/Application Support/…     88 MB
+  ~/Library/Caches/…                 140 MB
+  ~/Library/Preferences/….plist       12 KB
+  ~/Library/Saved Application State  1.1 MB
+  ~/Library/LaunchAgents/….plist     820 B
+
+  <span class="c">6 items · 641 MB · to the Trash</span></code></pre>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="copy">
+    <p class="kicker" data-reveal>History</p>
+    <h3 data-reveal>An append-only record of everything it ever removed.</h3>
+    <p data-reveal>
+      What was deleted, when, how large it was, and under whose authority. A
+      cleaner that cannot tell you what it did last month is asking for trust it
+      has not earned.
+    </p>
+    <p data-reveal>
+      There is a health view and a process list beside it, because the reason a
+      disk keeps filling is usually still running.
+    </p>
+  </div>
+  <div data-reveal>
+    <pre class="term"><code><span class="p">$</span> eve history
+
+  2026-08-29 14:02  clean        1.4 GB   user
+  2026-08-29 14:02  trash        820 MB   user
+  2026-08-27 03:11  autoclean    340 MB   agent
+  2026-08-24 19:40  uninstall    641 MB   user
+  2026-08-21 09:15  clean       17.9 GB   <span class="k">root</span>
+
+<span class="c">  append-only — eve never rewrites this file</span></code></pre>
+  </div>
+</section>
+
+<!-- ────────────────────────────── safety ──────────────────────────── -->
+<section class="gates" id="gates">
+  <h2 data-reveal>The five gates</h2>
+  <p class="sub" data-reveal>
+    Every deletion passes all five, whichever surface asked for it — and the one
+    place root lives passes them again on its own account. This is the part of
+    eve worth reading before you run it.
+  </p>
+
+  <ul class="gate-grid">
+    <li class="gate" data-reveal>
+      <span class="n">1</span>
+      <b>Path validation</b>
+      <span>Absolute paths only, control characters rejected, and an
+      ancestor-symlink guard — because a redirected <code>~/Library/Caches</code>
+      looks innocent as a string while the delete follows it into your
+      documents.</span>
+    </li>
+    <li class="gate" data-reveal>
+      <span class="n">2</span>
+      <b>Protection policy</b>
+      <span>System roots, other users' homes, mounted volumes, and your
+      documents, photos, keys and iCloud files. A category's exemption is
+      declared in the catalog rather than buried in code.</span>
+    </li>
+    <li class="gate" data-reveal>
+      <span class="n">3</span>
+      <b>A live-owner check that fails closed</b>
+      <span>eve will not delete a cache whose owner is still running.
+      “I could not tell” counts as running — deleting an open SQLite cache can
+      send its helper into a loop that fills the volume.</span>
+    </li>
+    <li class="gate" data-reveal>
+      <span class="n">4</span>
+      <b>Trash by default</b>
+      <span>Deletions stay recoverable. If the Trash is unavailable eve
+      <em>refuses</em> rather than escalating to a permanent unlink — asking for
+      a recoverable delete and quietly getting an irrecoverable one is a lie.</span>
+    </li>
+    <li class="gate" data-reveal>
+      <span class="n">5</span>
+      <b>An append-only journal</b>
+      <span>Every removal is recorded with its size, its time and the authority
+      it ran under, and the record is never rewritten.</span>
+    </li>
+    <li class="gate" data-reveal>
+      <span class="n">+</span>
+      <b>One password, one session</b>
+      <span>Root lives in a single worker reached over inherited pipes, and it
+      re-runs the entire funnel itself — a buggy or compromised parent cannot
+      talk it into a deletion the policy forbids.</span>
+    </li>
+  </ul>
+
+  <div class="tiers" data-reveal>
+    <h3>Risk tiers</h3>
+    <p>
+      The tier is a property of the target. iOS device backups are
+      <code>never-auto</code>: they are photos and videos, they are TCC-protected
+      so they would measure as zero bytes, and no flag reaches them from an
+      unattended run.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Tier</th>
+            <th scope="col">What it covers</th>
+            <th scope="col">Unattended?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row"><code>safe</code></th><td>Regenerable caches</td><td class="y">Yes</td></tr>
+          <tr><th scope="row"><code>review</code></th><td>Adjacent to user data</td><td class="n">No</td></tr>
+          <tr><th scope="row"><code>privileged</code></th><td>Needs root — sleep image, log store</td><td class="y">Yes</td></tr>
+          <tr><th scope="row"><code>destructive</code></th><td>App removal, system assets</td><td class="n">No</td></tr>
+          <tr><th scope="row"><code>never-auto</code></th><td>User data misfiled as cache</td><td class="n">Never</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────────── numbers ───────────────────────────── -->
+<section class="stats">
+  <div class="stat" data-reveal><b data-count="129">0</b><span>tests</span></div>
+  <div class="stat" data-reveal><b data-count="5">0</b><span>gates on every deletion</span></div>
+  <div class="stat" data-reveal><b data-count="1">0</b><span>password, once per session</span></div>
+  <div class="stat" data-reveal><b data-count="0">0</b><span>bytes of telemetry</span></div>
+</section>
+
+<!-- ───────────────────────────── get eve ───────────────────────────── -->
+<section class="get" id="get">
+  <h2 data-reveal>Get eve</h2>
+  <p class="sub" data-reveal>
+    There is no signed download yet. Building it is one command, and a signature
+    that stays the same between builds is what lets macOS keep your Full Disk
+    Access grant — so it is worth doing properly.
+  </p>
+
+  <div class="cards">
+    <article class="card" data-reveal>
+      <h3>The app</h3>
+      <p>
+        The full window: overview, clean, disk, applications, machines, history,
+        health and settings. Clone the repository, then build it and drag it to
+        Applications.
+      </p>
+      <pre><code>scripts/bundle-app.sh
+cp -R dist/eve.app /Applications/</code></pre>
+      <a class="btn primary" href="/docs/install.html">Installation guide</a>
+      <p class="note">
+        Requires macOS 14+ and Rust 1.85+. eve asks for Full Disk Access on first
+        launch and opens the exact Settings pane for it.
+      </p>
+    </article>
+
+    <article class="card" data-reveal>
+      <h3>The command line</h3>
+      <p>
+        Every surface the app has, plus a full-screen TUI when you run
+        <code>eve</code> with no arguments.
+      </p>
+      <pre><code>cargo build --release
+cp target/release/eve ~/.local/bin/
+
+eve permissions --fix
+eve clean</code></pre>
+      <a class="btn ghost" href="https://github.com/hartle-tech/eve" rel="noopener">Read the README</a>
+      <p class="note">
+        The CLI is a different program to macOS than the app, so it needs its own
+        Full Disk Access grant — or point the background job at the app instead.
+      </p>
+    </article>
+
+    <article class="card" data-reveal>
+      <h3>Unattended cleaning</h3>
+      <p>
+        A low-disk trigger that runs from a LaunchAgent, holds a pid-checked lock
+        and enforces a cooldown so a persistent problem cannot re-fire forever.
+      </p>
+      <pre><code>eve agent install
+eve agent      # what launchd runs</code></pre>
+      <a class="btn ghost" href="/docs/safety.html">What it will not touch</a>
+      <p class="note">
+        It cannot reach <code>destructive</code> or <code>never-auto</code>
+        categories whatever any config file says. That is structural, not a
+        default.
+      </p>
+    </article>
+  </div>
+</section>
+
+<!-- ───────────────────────────── support ───────────────────────────── -->
+<section class="support" id="support">
+  <div class="support-inner" data-reveal>
+    <h2>Free, and it stays free</h2>
+    <p>
+      No licence tiers, no accounts, no upsell, and nothing phones home. If eve
+      saved you an afternoon — or a disk — this is where you can say so.
+    </p>
+    <p class="pills">
+      <a class="pill" href="https://github.com/sponsors/code-hartle-tech" rel="noopener noreferrer" target="_blank">GitHub Sponsors</a>
+      <a class="pill" href="https://patreon.com/HARTLETECH" rel="noopener noreferrer" target="_blank">Patreon</a>
+      <a class="pill" href="https://liberapay.com/hartle.tech/donate" rel="noopener noreferrer" target="_blank">Liberapay</a>
+      <a class="pill" href="https://ko-fi.com/hartletech" rel="noopener noreferrer" target="_blank">Ko-fi</a>
+      <a class="pill" href="https://wise.com/pay/business/hartletechunipessoallda" rel="noopener noreferrer" target="_blank">Wise</a>
+      <a class="pill" href="https://paypal.me/hartletech" rel="noopener noreferrer" target="_blank">PayPal</a>
+      <a class="pill" href="https://buy.stripe.com/5kQ8wR3Wm1sjbKW15E9fW01" rel="noopener noreferrer" target="_blank">Stripe</a>
+    </p>
+    <p class="or">
+      Or star the repository — it costs nothing and it is how people find it.
+      <a class="plain" href="https://github.com/hartle-tech/eve" rel="noopener">github.com/hartle-tech/eve</a>
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="foot">
+    <div>
+      <p class="brand">HARTLE.TECH</p>
+      <p class="muted">Porto, Portugal · <a href="mailto:contact@hartle.tech">contact@hartle.tech</a></p>
+    </div>
+    <nav class="foot-links">
+      <a href="https://github.com/hartle-tech/eve" rel="noopener">GitHub</a>
+      <a href="/docs/">Docs</a>
+      <a href="/docs/safety.html">Safety</a>
+      <a href="/NOTICE.txt">Provenance</a>
+      <a href="https://github.com/hartle-tech/eve/blob/main/LICENSE" rel="noopener">Apache-2.0</a>
+    </nav>
+  </div>
+  <p class="legal">
+    eve deletes files, including under root authority. It is careful, and the
+    rules it is careful by are written down on this site — but you are still the
+    person responsible for the disk. Read the safety page before granting the
+    privileged tier. macOS, Xcode and Photos are trademarks of Apple Inc.,
+    used here only to say what this software works with; eve is not affiliated
+    with Apple.
+  </p>
+</footer>
+
+<script src="/eve.js"></script>
+</body>
+</html>
